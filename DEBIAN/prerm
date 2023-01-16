@@ -1,0 +1,2 @@
+service dockerfilter-persistent stop
+systemctl disable dockerfilter-persistent

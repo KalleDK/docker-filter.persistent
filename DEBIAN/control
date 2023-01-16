@@ -1,0 +1,5 @@
+Package: dockerfilter-persistent
+Version: 1.0
+Architecture: amd64
+Maintainer: Kalle M. Aagaard <deb@k-moeller.dk>
+Description: A service to persistent your iptables rules while not touching Dockers
