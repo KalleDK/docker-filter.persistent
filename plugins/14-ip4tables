@@ -14,14 +14,57 @@ set -e
 
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-PROTECTED_CHAINS="PREROUTING POSTROUTING FORWARD DOCKER OUTPUT DOCKER-ISOLATION-STAGE-1 DOCKER-ISOLATION-STAGE-2"
+PROTECTED_CHAINS="PREROUTING POSTROUTING FORWARD OUTPUT DOCKER DOCKER-ISOLATION-STAGE-1 DOCKER-ISOLATION-STAGE-2"
+PROTECTED_CHAINS_FILTER=''
+for chain in $PROTECTED_CHAINS
+do
+    PROTECTED_CHAINS_FILTER="${PROTECTED_CHAINS_FILTER}^${chain}"'$|'
+done
+PROTECTED_CHAINS_FILTER=$(echo "${PROTECTED_CHAINS_FILTER}" | sed -r 's/\|$//')
 
-BUILTIN_CHAINS_FILTER='^INPUT$|^FORWARD$|^OUTPUT$'
+BUILTIN_CHAINS="INPUT FORWARD OUTPUT"
+BUILTIN_CHAINS_FILTER=''
+for chain in $BUILTIN_CHAINS
+do
+    BUILTIN_CHAINS_FILTER="${BUILTIN_CHAINS_FILTER}^${chain}"'$|'
+done
+BUILTIN_CHAINS_FILTER=$(echo "${BUILTIN_CHAINS_FILTER}" | sed -r 's/\|$//')
+
 
 SKIP_DELETE_FILTER='^DOCKER-USER$'
 
 SAVE_FILE=/etc/iptables/docker-rules.v4
 
+
+flush_rules()
+{
+    TABLES=$(iptables-save | sed -E -n 's/^\*//p')
+    for table in $TABLES
+    do
+        CHAINS=$(iptables-save -t "${table}" | sed -E -n 's/^:([^ ]+).*/\1/p' | grep -v -E "${PROTECTED_CHAINS_FILTER}"  || true)
+        B_CHAINS=$(echo "${CHAINS}" | grep -E "${BUILTIN_CHAINS_FILTER}"  || true)
+        D_CHAINS=$(echo "${CHAINS}" | grep -E -v "${BUILTIN_CHAINS_FILTER}" | grep -E -v "${SKIP_DELETE_FILTER}" || true)
+        
+        for chain in $B_CHAINS
+        do
+            echo "Policy $table $chain"
+            # policy can't be set on user-defined chains
+            iptables -t "${table}" -P "${chain}" ACCEPT
+        done
+        for chain in $CHAINS
+        do
+            echo "Flush $table $chain"
+            iptables -t "${table}" -F "${chain}"
+            iptables -t "${table}" -Z "${chain}"
+        done
+        for chain in $D_CHAINS
+        do
+            echo "Delete $table $chain"
+            # you can't delete builtin and DOCKER-USER
+            iptables -t "${table}" -X "${chain}"
+        done
+    done
+}
 
 
 load_rules()
@@ -30,6 +73,7 @@ load_rules()
     if [ ! -f "${SAVE_FILE}" ]; then
         echo "Warning: skipping IPv4 (no rules to load)"
     else
+        flush_rules
         iptables-restore --noflush < $SAVE_FILE
     fi
 }
@@ -44,47 +88,13 @@ save_rules()
         done
         IPTABLE_FILTER=$(echo "${IPTABLE_FILTER}" | sed -r 's/ \|$//')
         
-        APPEND_FLUSH_SED='s/^:([^ ]+) (.*)/-F \1\n:\1 \2/'
-
         touch $SAVE_FILE
-        iptables-save | grep -v -E "${IPTABLE_FILTER}" | sed -r "${APPEND_FLUSH_SED}"  > $SAVE_FILE
+        iptables-save | grep -v -E "${IPTABLE_FILTER}"  > $SAVE_FILE
         chmod 0640 $SAVE_FILE
     fi
 }
 
-flush_rules()
-{
-    SKIPPED_CHAINS=''
-    for chain in $PROTECTED_CHAINS
-    do
-        SKIPPED_CHAINS="${SKIPPED_CHAINS}^${chain}"'$|'
-    done
-    SKIPPED_CHAINS=$(echo "${SKIPPED_CHAINS}" | sed -r 's/\|$//')
 
-    TABLES=$(iptables-save | sed -E -n 's/^\*//p')
-    for table in $TABLES
-        do
-            CHAINS=$(iptables-save -t "${table}" | sed -E -n 's/^:([0-9A-Z\-]+).*/\1/p' | grep -v -E "${SKIPPED_CHAINS}"  || true)
-            B_CHAINS=$(echo "${CHAINS}" | grep -E "${BUILTIN_CHAINS_FILTER}"  || true)
-            D_CHAINS=$(echo "${CHAINS}" | grep -E -v "${BUILTIN_CHAINS_FILTER}" | grep -E -v "${SKIP_DELETE_FILTER}" || true)
-            
-        for chain in $B_CHAINS
-        do
-            # policy can't be set on user-defined chains
-            iptables -t "${table}" -P "${chain}" ACCEPT
-        done
-        for chain in $CHAINS
-        do
-            iptables -t "${table}" -F "${chain}"
-            iptables -t "${table}" -Z "${chain}"
-        done
-        for chain in $D_CHAINS
-        do
-            # you can't delete builtin and DOCKER-USER
-            iptables -t "${table}" -X "${chain}"
-        done
-    done
-}
 
 case "$1" in
 start|restart|reload|force-reload)

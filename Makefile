@@ -1,4 +1,4 @@
-VERSION=1.2
+VERSION=1.3
 REV=1
 ARCH=amd64
 NAME=dockerfilter-persistent

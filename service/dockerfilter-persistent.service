@@ -1,8 +1,7 @@
 [Unit]
 Description=netfilter persistent configuration
 DefaultDependencies=no
-Wants=network-pre.target systemd-modules-load.service local-fs.target
-Before=network-pre.target shutdown.target
+Requires=docker.service
 After=systemd-modules-load.service local-fs.target docker.service
 Conflicts=shutdown.target netfilter-persistent.service
 Documentation=man:netfilter-persistent(8)
@@ -14,4 +13,4 @@ ExecStart=/usr/sbin/netfilter-persistent start
 ExecStop=/usr/sbin/netfilter-persistent stop
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=multi-user.targetroot
