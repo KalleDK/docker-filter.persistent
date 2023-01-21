@@ -1,6 +1,6 @@
-VERSION=1.4
+VERSION=1.7
 REV=1
-ARCH=amd64
+ARCH=all
 NAME=dockerfilter-persistent
 BUILD_DIR=build
 
