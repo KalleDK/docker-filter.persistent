@@ -1,64 +1,58 @@
 #!/bin/sh
 
-# This file is part of netfilter-persistent
-# (was iptables-persistent)
-# Copyright (C) 2009, Simon Richter <sjr@debian.org>
-# Copyright (C) 2010, 2014 Jonathan Wiltshire <jmw@debian.org>
-#
-# This program is free software; you can redistribute it and/or
-# modify it under the terms of the GNU General Public License
-# as published by the Free Software Foundation, either version 3
-# of the License, or (at your option) any later version.
-
 set -e
 
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 SAVE_FILE=/etc/iptables/docker-rules.v6
 
-BUILTIN_CHAINS_FILTER='^INPUT$|^FORWARD$|^OUTPUT$'
+IPTABLES_RESTORE=ip6tables-restore
+IPTABLES_SAVE=ip6tables-save
+IPTABLES=ip6tables
 
-# Exit fast if IPv6 is disabled
-test -e /proc/sys/net/ipv6 || exit 0
+LOG="logger -s -t dockerfilter"
+
+flush_rules()
+{
+    $LOG "flushing ipv6 rules"
+    TABLES=$($IPTABLES_SAVE | sed -E -n 's/^\*//p')
+    for table in $TABLES
+    do
+        # policy can only be set on builtin chains
+        BUILTIN_CHAINS=$($IPTABLES_SAVE -t "${table}" | sed -E -n 's/^:([^ ]+) [^\-].*/\1/p')
+        for chain in $BUILTIN_CHAINS
+        do
+            $IPTABLES -t "${table}" -P "${chain}" ACCEPT
+        done
+        
+        $IPTABLES -t "${table}" -F
+        $IPTABLES -t "${table}" -Z
+        $IPTABLES -t "${table}" -X
+    done
+}
 
 load_rules()
 {
-    #load IPv6 rules
     if [ ! -f $SAVE_FILE ]; then
-        echo "Warning: skipping IPv6 (no rules to load)"
-    else
-        ip6tables-restore < $SAVE_FILE
+        $LOG "skipping IPv6 no file"
+        return
     fi
+    $LOG "loading IPv6 rules $SAVE_FILE"
+    $IPTABLES_RESTORE < $SAVE_FILE
 }
 
 save_rules()
 {
-    if [ ! "${IPTABLES_DOCKER_SKIP_SAVE}x" = "yesx" ]; then
-        touch $SAVE_FILE
-        ip6tables-save > $SAVE_FILE
-        chmod 0640 $SAVE_FILE
+    if [ "${IPTABLES_DOCKER_SKIP_SAVE}" = "yes" ]; then
+        $LOG "skipping saving IPv6"
+        return
     fi
+    $LOG "saving IPv6 rules $SAVE_FILE"
+    $IPTABLES_SAVE > $SAVE_FILE
+    chmod 0640 $SAVE_FILE
 }
 
-flush_rules()
-{
-    TABLES=$(ip6tables-save | sed -E -n 's/^\*//p')
-    for table in $TABLES
-    do
-        CHAINS=$(ip6tables-save -t "${table}" | sed -E -n 's/^:([0-9A-Z\-]+).*/\1/p')
 
-        B_CHAINS=$(echo "${CHAINS}" | grep -E "${BUILTIN_CHAINS_FILTER}")
-        
-        for chain in $B_CHAINS
-        do
-            # policy can't be set on user-defined chains
-            ip6tables -t "${table}" -P "${chain}" ACCEPT
-        done
-        ip6tables -t "${table}" -F
-        ip6tables -t "${table}" -Z
-        ip6tables -t "${table}" -X
-    done
-}
 
 case "$1" in
 start|restart|reload|force-reload)
@@ -68,10 +62,7 @@ save)
     save_rules
     ;;
 stop)
-    # Why? because if stop is used, the firewall gets flushed for a variable
-    # amount of time during package upgrades, leaving the machine vulnerable
-    # It's also not always desirable to flush during purge
-    echo "Automatic flushing disabled, use \"flush\" instead of \"stop\""
+    echo "No flushing on stop"
     ;;
 flush)
     flush_rules

@@ -1,18 +1,16 @@
 #!/bin/sh
 
-# This file is part of netfilter-persistent
-# (was iptables-persistent)
-# Copyright (C) 2009, Simon Richter <sjr@debian.org>
-# Copyright (C) 2010, 2014 Jonathan Wiltshire <jmw@debian.org>
-#
-# This program is free software; you can redistribute it and/or
-# modify it under the terms of the GNU General Public License
-# as published by the Free Software Foundation, either version 3
-# of the License, or (at your option) any later version.
-
 set -e
 
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+SAVE_FILE=/etc/iptables/docker-rules.v4
+
+IPTABLES_RESTORE=iptables-restore
+IPTABLES_SAVE=iptables-save
+IPTABLES=iptables
+
+LOG="logger -s -t dockerfilter"
 
 PROTECTED_CHAINS="PREROUTING POSTROUTING FORWARD OUTPUT DOCKER DOCKER-ISOLATION-STAGE-1 DOCKER-ISOLATION-STAGE-2"
 PROTECTED_CHAINS_FILTER=''
@@ -30,38 +28,38 @@ do
 done
 BUILTIN_CHAINS_FILTER=$(echo "${BUILTIN_CHAINS_FILTER}" | sed -r 's/\|$//')
 
-
 SKIP_DELETE_FILTER='^DOCKER-USER$'
 
-SAVE_FILE=/etc/iptables/docker-rules.v4
+
 
 
 flush_rules()
 {
-    TABLES=$(iptables-save | sed -E -n 's/^\*//p')
+    $LOG "flushing ipv6 rules"
+    TABLES=$($IPTABLES_SAVE | sed -E -n 's/^\*//p')
     for table in $TABLES
     do
-        CHAINS=$(iptables-save -t "${table}" | sed -E -n 's/^:([^ ]+).*/\1/p' | grep -v -E "${PROTECTED_CHAINS_FILTER}"  || true)
-        B_CHAINS=$(echo "${CHAINS}" | grep -E "${BUILTIN_CHAINS_FILTER}"  || true)
-        D_CHAINS=$(echo "${CHAINS}" | grep -E -v "${BUILTIN_CHAINS_FILTER}" | grep -E -v "${SKIP_DELETE_FILTER}" || true)
-        
-        for chain in $B_CHAINS
+        BUILTIN_CHAINS=$($IPTABLES_SAVE -t "${table}" | sed -E -n 's/^:([^ ]+) [^\-].*/\1/p')
+        for chain in $BUILTIN_CHAINS
         do
-            echo "Policy $table $chain"
+            $LOG "Policy $table $chain"
             # policy can't be set on user-defined chains
-            iptables -t "${table}" -P "${chain}" ACCEPT
+            $IPTABLES -t "${table}" -P "${chain}" ACCEPT
         done
-        for chain in $CHAINS
+
+        FLUSH_CHAINS=$($IPTABLES_SAVE -t "${table}" | sed -E -n 's/^:([^ ]+).*/\1/p' | grep -v -E "${PROTECTED_CHAINS_FILTER}"  || true)
+        for chain in $FLUSH_CHAINS
         do
-            echo "Flush $table $chain"
-            iptables -t "${table}" -F "${chain}"
-            iptables -t "${table}" -Z "${chain}"
+            $LOG "Flush $table $chain"
+            $IPTABLES -t "${table}" -F "${chain}"
+            $IPTABLES -t "${table}" -Z "${chain}"
         done
-        for chain in $D_CHAINS
+
+        DELETE_CHAINS=$($IPTABLES_SAVE -t "${table}" | sed -E -n 's/^:([^ ]+).*/\1/p' | grep -v -E "${PROTECTED_CHAINS_FILTER}" | grep -v -E "${BUILTIN_CHAINS_FILTER}" | grep -E -v "${SKIP_DELETE_FILTER}" || true)
+        for chain in $DELETE_CHAINS
         do
-            echo "Delete $table $chain"
-            # you can't delete builtin and DOCKER-USER
-            iptables -t "${table}" -X "${chain}"
+            $LOG "Delete $table $chain"
+            $IPTABLES -t "${table}" -X "${chain}"
         done
     done
 }
@@ -69,29 +67,30 @@ flush_rules()
 
 load_rules()
 {
-    #load IPv4 rules
-    if [ ! -f "${SAVE_FILE}" ]; then
-        echo "Warning: skipping IPv4 (no rules to load)"
-    else
-        flush_rules
-        iptables-restore --noflush < $SAVE_FILE
+    if [ ! -f $SAVE_FILE ]; then
+        $LOG "skipping IPv4 no file"
+        return
     fi
+    $LOG "loading IPv4 rules $SAVE_FILE"
+    $IPTABLES_RESTORE --noflush < $SAVE_FILE
 }
 
 save_rules()
 {
-    if [ ! "${IPTABLES_DOCKER_SKIP_SAVE}x" = "yesx" ]; then
-        IPTABLE_FILTER=''
-        for chain in $PROTECTED_CHAINS
-        do
-            IPTABLE_FILTER="${IPTABLE_FILTER}:${chain}"' |-A '"${chain}"' |'
-        done
-        IPTABLE_FILTER=$(echo "${IPTABLE_FILTER}" | sed -r 's/ \|$//')
-        
-        touch $SAVE_FILE
-        iptables-save | grep -v -E "${IPTABLE_FILTER}"  > $SAVE_FILE
-        chmod 0640 $SAVE_FILE
+    if [ "${IPTABLES_DOCKER_SKIP_SAVE}" = "yes" ]; then
+        $LOG "skipping saving IPv4"
+        return
     fi
+    
+    IPTABLE_FILTER=''
+    for chain in $PROTECTED_CHAINS
+    do
+        IPTABLE_FILTER="${IPTABLE_FILTER}:${chain}"' |-A '"${chain}"' |'
+    done
+    IPTABLE_FILTER=$(echo "${IPTABLE_FILTER}" | sed -r 's/ \|$//')
+    
+    iptables-save | grep -v -E "${IPTABLE_FILTER}" > $SAVE_FILE
+    chmod 0640 $SAVE_FILE
 }
 
 
@@ -104,10 +103,7 @@ save)
     save_rules
     ;;
 stop)
-    # Why? because if stop is used, the firewall gets flushed for a variable
-    # amount of time during package upgrades, leaving the machine vulnerable
-    # It's also not always desirable to flush during purge
-    echo "Automatic flushing disabled, use \"flush\" instead of \"stop\""
+    echo "No flushing on stop"
     ;;
 flush)
     flush_rules
