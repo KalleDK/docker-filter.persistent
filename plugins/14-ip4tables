@@ -76,7 +76,7 @@ load_rules()
 }
 
 save_rules()
-{
+{ 
     if [ "${IPTABLES_DOCKER_SKIP_SAVE}" = "yes" ]; then
         $LOG "skipping saving IPv4"
         return
