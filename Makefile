@@ -1,4 +1,4 @@
-VERSION=1.7
+VERSION=1.8
 REV=1
 ARCH=all
 NAME=dockerfilter-persistent
