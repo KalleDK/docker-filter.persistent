@@ -20,6 +20,5 @@ jobs:
           sudo gem install package_cloud
           for pkg in $(find ./build -name '*.deb')
           do
-            package_cloud push KalleDK/debian/debian/bullseye $pkg
-            package_cloud push KalleDK/debian/any/any $pkg
+            package_cloud push KalleDK/debian/debian/any $pkg
           done
